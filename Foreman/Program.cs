@@ -44,6 +44,12 @@ namespace Foreman
         {
             var filename = args.Length == 1 ? args[0] : Path.Combine(Directory.GetCurrentDirectory(), "Procfile");
 
+            if (!File.Exists(filename))
+            {
+                Console.WriteLine("Could not find Procfile. Please make sure it exists in the current directory, or supply it on the command line.");
+                return;
+            }
+
             using (var procfile = new Procfile(filename))
             {
                 InitPadding(procfile);
