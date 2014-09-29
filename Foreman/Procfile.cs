@@ -1,99 +1,112 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 
 namespace Foreman
 {
-    class Procfile
+    class Procfile : ProcfileBase
     {
-        public delegate void TextReceivedHandler(ProcfileEntry objEntry, string strText);
-        public delegate void StatusRecievedHandler(string strText);
+        #region Properties
 
-        private string m_strFilename = null;
-        private List<ProcfileEntry> m_arrProcfileEntries = null;
-        private bool m_blnStarted = false;
+        public List<ProcfileEntry> ProcfileEntries { get; private set; }
+
+        public string WorkingDirectory
+        {
+            get { return new FileInfo(this.FileName).DirectoryName; }
+        }
+
+        public string FileName { get; private set; }
+
+        #endregion
+
+        #region Initialization
 
         public Procfile(string strFilename)
         {
-            m_strFilename = strFilename;
-            m_arrProcfileEntries = new List<ProcfileEntry>();
+            this.FileName = strFilename;
 
-            string strContents = System.IO.File.ReadAllText(strFilename);
-            int intCurrent = 1;
+            ProcfileEntries = new List<ProcfileEntry>();
 
-            foreach (string strLine in strContents.Split('\n'))
+            var strContents = File.ReadAllText(strFilename);
+
+            foreach (var strLine in strContents.Split('\n'))
             {
-                string[] arrLine = strLine.Split(':');
+                var arrLine = strLine.Split(new[] {':'}, 2);
 
-                if (arrLine.Length == 2)
-                {
-                    ProcfileEntry objProcfileEntry = new ProcfileEntry(this, intCurrent, arrLine[0].Trim(), arrLine[1].Trim());
-                    objProcfileEntry.TextReceived += delegate(ProcfileEntry objEntry, string strData)
-                    {
-                        TextReceived(objEntry, strData);
-                    };
-                    m_arrProcfileEntries.Add(objProcfileEntry);
-                    intCurrent += 1;
-                }
+                if (arrLine.Length != 2) 
+                    continue;
+
+                var objProcfileEntry = new ProcfileEntry(ProcfileEntries.Count + 1, arrLine[0].Trim(), arrLine[1].Trim(), WorkingDirectory);
+                AddProcfileEntry(objProcfileEntry);
             }
         }
 
-        public string Header()
+        #endregion
+
+        #region Process Control
+
+        protected override void StartInternal()
         {
-            return (String.Format(@"{{{0} {1,-" + LongestNameLength() + "} |}} ", "00:00:00", "system"));
-        }
-
-        public void Start()
-        {
-            if (m_blnStarted)
-                return;
-
-            m_blnStarted = true;
-
-            foreach (ProcfileEntry objProcfileEntry in m_arrProcfileEntries)
+            foreach (var procfileEntry in ProcfileEntries)
             {
-                Thread objThread = new Thread(new ThreadStart(objProcfileEntry.Start));
+                var objThread = new Thread(procfileEntry.Start);
                 objThread.Start();
             }
         }
 
-        public void Stop()
+        protected override void StopInternal()
         {
-            if (!m_blnStarted)
-                return;
+            OnStatusReceived("stopping all processes");
 
-            StatusReceived("stopping all processes");
-
-            m_blnStarted = false;
-
-            foreach (ProcfileEntry objProcfileEntry in m_arrProcfileEntries)
+            foreach (var objProcfileEntry in ProcfileEntries)
             {
                 objProcfileEntry.Stop();
             }
         }
 
-        public void Info(ProcfileEntry objEntry, string strText)
-        {
-            TextReceived(objEntry, strText);
-        }
 
-        public event TextReceivedHandler TextReceived;
-        public event StatusRecievedHandler StatusReceived;
-
-        public int LongestNameLength()
+        protected override void Dispose(bool disposing)
         {
-            int intLongestName = m_arrProcfileEntries.Select( objEntry => objEntry.Name.Length ).Max();
-            return ((intLongestName > 6) ? intLongestName : 6);
-        }
+            base.Dispose(disposing);
 
-        public string FileName
-        {
-            get
+            if (!disposing)
+                return;
+
+            while (ProcfileEntries.Count > 0)
             {
-                return (m_strFilename);
+                var entry = ProcfileEntries[0];
+                ProcfileEntries.RemoveAt(0);
+
+                entry.ProcessDataReceived -= ProcfileEntryOnProcessDataReceived;
+                entry.StatusReceived -= ProcfileEntryOnStatusReceived;
+
+                entry.Dispose();
             }
         }
+
+        #endregion
+
+        #region Event Helpers
+
+        private void AddProcfileEntry(ProcfileEntry procfileEntry)
+        {
+            procfileEntry.ProcessDataReceived += ProcfileEntryOnProcessDataReceived;
+            procfileEntry.StatusReceived += ProcfileEntryOnStatusReceived;
+            ProcfileEntries.Add(procfileEntry);
+        }
+
+        private void ProcfileEntryOnStatusReceived(object sender, ProcfileEventArgs args)
+        {
+            OnStatusReceived(args);
+        }
+
+        private void ProcfileEntryOnProcessDataReceived(object sender, ProcfileEventArgs args)
+        {
+            OnProcessDataReceived(args);
+        }
+
+        #endregion
     }
 }

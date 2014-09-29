@@ -7,111 +7,91 @@ using System.Text;
 
 namespace Foreman
 {
-    class ProcfileEntry
+    class ProcfileEntry : ProcfileBase
     {
-        private Procfile m_objProcfile = null;
-        private int m_intIndex = 0;
-        private string m_strName = null;
-        private string m_strCommand = null;
-        private Process m_objProcess = null;
+        #region Initialization
 
-        public ProcfileEntry(Procfile objProcfile, int intIndex, string strName, string strCommand)
+        private readonly int _index;
+        private readonly string _workingDirectory;
+        private readonly string _command;
+        private Process _process;
+
+        public ProcfileEntry(int intIndex, string strName, string strCommand, string workingDirectory)
         {
-            m_objProcfile = objProcfile;
-            m_intIndex = intIndex;
-            m_strName = strName;
-            m_strCommand = strCommand.Replace("$PORT", Port().ToString());
+            _index = intIndex;
+            Name = strName;
+            _workingDirectory = workingDirectory;
+            _command = strCommand.Replace("$PORT", Port.ToString());
         }
 
-        public string Header()
+        #endregion
+
+        #region Properties
+
+        public string Name { get; private set; }
+
+        public int Port
         {
-            return (String.Format(@"{{\cf{0} {1} {2,-" + m_objProcfile.LongestNameLength() + "} |}} ", m_intIndex, "00:00:00", m_strName));
+            get { return (5000 + (100*(_index - 1))); }
         }
 
-        public int Port()
+        #endregion
+
+        #region Process Control
+
+        protected override void StartInternal()
         {
-            return (5000 + (100 * (m_intIndex - 1)));
-        }
-
-        public void Start()
-        {
-            m_objProcess = new Process();
-
-            m_objProcess.StartInfo.CreateNoWindow = true;
-            m_objProcess.StartInfo.UseShellExecute = false;
-            m_objProcess.StartInfo.RedirectStandardOutput = true;
-            m_objProcess.StartInfo.RedirectStandardError = true;
-
-            m_objProcess.StartInfo.FileName = "cmd.exe";
-            m_objProcess.StartInfo.Arguments = "/interactive /c " + m_strCommand;
-            m_objProcess.StartInfo.WorkingDirectory = new FileInfo(m_objProcfile.FileName).DirectoryName;
-
-            m_objProcess.EnableRaisingEvents = true;
-
-            m_objProcess.OutputDataReceived += DataReceived;
-            m_objProcess.ErrorDataReceived += DataReceived;
-            m_objProcess.Exited += ProcessExited;
-
-            TextReceived(this, "starting: " + m_strCommand);
-
-            m_objProcess.Start();
-
-            m_objProcess.BeginOutputReadLine();
-            m_objProcess.BeginErrorReadLine();
-        }
-
-        public void Stop()
-        {
-            Dictionary<int, List<int>> arrPidMappings = ProcessUtilities.PidsByParent();
-
-            if (! m_objProcess.HasExited)
+            _process = new Process
             {
-                m_objProcfile.Info(this, "stopping process");
-                KillPid(arrPidMappings, m_objProcess.Id);
-            }
-        }
-
-        public event Procfile.TextReceivedHandler TextReceived;
-
-        public string Name
-        {
-            get
-            {
-                return (m_strName);
-            }
-        }
-
-        private void KillPid(Dictionary<int, List<int>> arrPidMappings, int intPid)
-        {
-            if (arrPidMappings.ContainsKey(intPid))
-            {
-                foreach (int intChildPid in arrPidMappings[intPid])
+                StartInfo =
                 {
-                    Debug.WriteLine("killing {0}", intChildPid);
-                    KillPid(arrPidMappings, intChildPid);
-                }
-            }
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    FileName = "cmd.exe",
+                    Arguments = "/interactive /c " + _command,
+                    WorkingDirectory = _workingDirectory,
+                },
+                EnableRaisingEvents = true
+            };
 
-            try
-            {
-                Process.GetProcessById(intPid).Kill();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("error killing");
-                Debug.WriteLine(ex.ToString());
-            }
+            _process.OutputDataReceived += DataReceived;
+            _process.ErrorDataReceived += DataReceived;
+            _process.Exited += ProcessExited;
+
+            OnStatusReceived("starting: " + _command);
+
+            _process.Start();
+
+            _process.BeginOutputReadLine();
+            _process.BeginErrorReadLine();
         }
 
-        private void DataReceived(object objSender, DataReceivedEventArgs args)
+        protected override void StopInternal()
         {
-            TextReceived(this, args.Data);
+            if (_process.HasExited) 
+                return;
+
+            OnStatusReceived("stopping process");
+            
+            ProcessUtilities.KillProcessTree(_process.Id);
         }
 
-        private void ProcessExited(object objSender, EventArgs args)
+        #endregion
+
+        #region Event Handlers
+
+        private void DataReceived(object sender, DataReceivedEventArgs args)
         {
-            m_objProcfile.Info(this, "process terminated");
-            m_objProcfile.Stop();
+            OnProcessDataReceived(this.Name, args.Data ?? string.Empty);
         }
+
+        private void ProcessExited(object sender, EventArgs args)
+        {
+            OnStatusReceived("process terminated");
+        }
+
+        #endregion
     }
 }

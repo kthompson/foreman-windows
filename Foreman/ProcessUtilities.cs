@@ -70,21 +70,21 @@ public struct ProcessUtilities
     /// </summary>
     public static Dictionary<int, List<int>> PidsByParent()
     {
-        Dictionary<int, List<int>> arrPidsByParent = new Dictionary<int, List<int>>();
+        var pidsByParent = new Dictionary<int, List<int>>();
 
-        foreach (Process objProcess in Process.GetProcesses())
+        foreach (var objProcess in Process.GetProcesses())
         {
             try
             {
-                int intChildPid = objProcess.Id;
-                int intParentPid = GetParentProcess(intChildPid).Id;
+                var intChildPid = objProcess.Id;
+                var intParentPid = GetParentProcess(intChildPid).Id;
 
-                if (!(arrPidsByParent.ContainsKey(intParentPid)))
+                if (!pidsByParent.ContainsKey(intParentPid))
                 {
-                    arrPidsByParent[intParentPid] = new List<int>();
+                    pidsByParent[intParentPid] = new List<int>();
                 }
 
-                arrPidsByParent[intParentPid].Add(intChildPid);
+                pidsByParent[intParentPid].Add(intChildPid);
             }
             catch
             {
@@ -92,6 +92,40 @@ public struct ProcessUtilities
         }
 
         
-        return (arrPidsByParent);
+        return (pidsByParent);
+    }
+
+    /// <summary>
+    /// Kills the process and any child processes.
+    /// </summary>
+    /// <param name="pid">The pid.</param>
+    public static void KillProcessTree(int pid)
+    {
+        var mappings = PidsByParent();
+        KillPid(mappings, pid);
+    }
+
+
+    private static void KillPid(IDictionary<int, List<int>> mappings, int pid)
+    {
+        if (mappings.ContainsKey(pid))
+        {
+            //Kill Child Processes first
+            foreach (var childPid in mappings[pid])
+            {
+                Debug.WriteLine("killing {0}", childPid);
+                KillPid(mappings, childPid);
+            }
+        }
+
+        try
+        {
+            Process.GetProcessById(pid).Kill();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("error killing");
+            Debug.WriteLine(ex.ToString());
+        }
     }
 }
